@@ -1,7 +1,26 @@
-// Simple "Hello, world!" program written in ADAN.
+// Simple "Hello, world!" program made using AdaN.
+/*
 
-Store hello_message -> "Hello, world!"; // Local variable -- Used only in this scope/context
+  Types:
 
-Global global_message -> "ADAN says:"; // Global variable -- Can be used anywhere.
+  - String
 
->> "!{global_message} !{hello_message}"; // "ADAN says: Hello, world!"
+  - i8, i32, i64 (  Signed 8-64 bit integers)
+  - u8, u32, u64 (Unsigned 8-64 bit integers)
+
+  - f32, f64 (32-64 bit floating point values)
+
+  - Boolean
+  - Char
+  - Array    (Fixed size)
+  - Object   ({<name>: <value>})
+
+*/
+
+include adan.prelude.io;
+
+program -> main {
+  local sample: String -> "Hello, world!";
+
+  io.out(sample); // "Hello, world!" Equivalent to print.
+}
