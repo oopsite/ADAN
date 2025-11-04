@@ -18,7 +18,7 @@ impl Lexer {
     }
 
     // Preview the next character without moving bits
-    pub fn preview(&self) -> Option(char) {
+    pub fn preview(&self) -> Option<char> {
         self.input.get(self.pos).copied()
     }
 
@@ -55,7 +55,7 @@ impl Lexer {
 
         let c = match self.preview() { // Searches for `char`, returns `None` if not found.
             Some(c) => c,
-            None => return Token::EOF,
+            None => return Token::Error("Unexpected EOF".to_string()),
         };
 
         if c.is_alphabetic() {
