@@ -3,6 +3,7 @@
 // language to be compiled later on.
 //
 
+#[derive(Debug, Clone)]
 pub enum Token {
     Keyword(Keyword),
     Symbols(Symbols),
@@ -16,6 +17,7 @@ pub enum Token {
 }
 
 // Individual enum pairs
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Keyword {
     Local,          //  local variables -- Can be used in a specific scope // context.
     Global,         // Global variables -- Can be used in *any* context.
@@ -29,6 +31,7 @@ pub enum Keyword {
 }
 
 // Less priority symbols unlike Equality & SemiColon.
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Symbols {
     Comment,        // Single-lined comments may be used on a newline *or* *any* line after ";".
     MultiLine,      //  Multi-lined comments make anything after "/*" and before "*/" a comment.
@@ -46,6 +49,7 @@ pub enum Symbols {
 }
 
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy)]
 pub enum Types {
     String,
 
