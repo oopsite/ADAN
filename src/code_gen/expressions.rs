@@ -1,5 +1,6 @@
 use crate::parser::ast::{Expr, Literal, Operation};
 use crate::code_gen::builder::{CodeGenContext};
+use inkwell::AddressSpace;
 use inkwell::values::*;                             // Gave up on adding stuff, literally just
                                                     // importing all of it.
 
@@ -29,7 +30,15 @@ pub fn codegen_expressions<'ctx>(ctx: &mut CodeGenContext<'ctx>, expr: &Expr) ->
         Expr::Literal(lit) => match lit {
             Literal::Number(n) => ctx.context.f64_type().const_float(*n).into(),
             Literal::Bool(b) => ctx.context.bool_type().const_int(*b as u64, false).into(),
-        
+            Literal::Nil => ctx.context.i8_type().ptr_type(AddressSpace::from(0u16)).const_null().into(),
+            Literal::String(s) => {
+                let array = ctx.context.const_string(s.as_bytes(), true);
+                let global = ctx.module.add_global(array.get_type(), None, "str");
+
+                global.set_initializer(&array);
+                global.as_pointer_value().into()
+            }
+
             _ => unimplemented!(),
         },
 
