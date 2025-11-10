@@ -1,3 +1,5 @@
+use crate::lexer::token::Types;
+
 /*
 MIT License
 
@@ -23,8 +25,8 @@ SOFTWARE.
 */
 
 // The ADAN AST Structure
-// Authored by: @oopsite
-// Dated Nov 4, 2025
+// Authored by: @oopsite, @transicle
+// Dated Nov 9, 2025
 
 // ADANs Expressions
 // ADAN supports these Exprs:
@@ -91,19 +93,19 @@ pub enum Literal {
 
 // ADANs Statements
 // These include:
-//   - Printing
 //   - Expressions
 //   - Variables Decs
 //   - If Statements
 //   - While Loops
 //   - Function Statements
 //   - Returning
+//   - Include
 #[derive(Debug, Clone)]
 pub enum Statement {
     Expression(Expr),
-    Print(Expr),
     VarDecl {           // local <var> -> <val>;
         name: String,
+        var_type: Option<Types>,
         initializer: Option<Expr>,
     },
     Block(Vec<Statement>), // { }
@@ -120,6 +122,7 @@ pub enum Statement {
     Return {
         value: Option<Expr>,
     },
+    Include(String),
 }
 
 // ADANs Function Declaration

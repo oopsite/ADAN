@@ -111,8 +111,23 @@ impl Parser {
     // Statements
     // ------------------------
     fn parse_statement(&mut self) -> Result<Statement, String> {
+        if self.match_keyword(Keyword::Include) {
+            return self.parse_include();
+        }
         if self.match_keyword(Keyword::Local) || self.match_keyword(Keyword::Global) {
             return self.parse_var_decl();
+        }
+        if self.match_keyword(Keyword::While) {
+            return self.parse_while_loops();
+        }
+        if self.match_keyword(Keyword::If) {
+            return self.parse_if_statement();
+        }
+        if self.match_keyword(Keyword::Program) {
+            return self.parse_functions();
+        }
+        if self.match_keyword(Keyword::Return) {
+            return self.parse_return();
         }
         if self.match_symbol(Symbols::LCurlyBracket) {
             return Ok(Statement::Block(self.parse_block()?));
@@ -122,13 +137,97 @@ impl Parser {
         Ok(Statement::Expression(expr))
     }
 
-    fn parse_block(&mut self) -> Result<Vec<Statement>, String> {
-        let mut stmts = vec![];
+    fn parse_include(&mut self) -> Result<Statement, String> {
+        self.expect_keyword(Keyword::Include)?;
 
-        while !self.match_symbol(Symbols::RCurlyBracket) {
-            if self.peek().is_none() {
-                return Err("Unterminated block".into());
+        let mut path = String::new();
+        loop {
+            match self.next().ok_or("Unexpected EOF in include")? {
+                Token::Ident(s) => path.push_str(&s),
+                Token::Symbols(Symbols::Period) => path.push('.'),
+                Token::Keyword(Keyword::SemiColon) => break,
+                tok => return Err(format!("Unexpected token in include: {:?}", tok)),
             }
+        }
+
+        Ok(Statement::Include(path))
+    }
+
+    fn parse_return(&mut self) -> Result<Statement, String> {
+        self.expect_keyword(Keyword::Return)?;
+        let value = if !self.match_keyword(Keyword::SemiColon) {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+
+        self.expect_keyword(Keyword::SemiColon)?;
+        Ok(Statement::Return { value })
+    }
+
+    fn parse_functions(&mut self) -> Result<Statement, String> {
+        self.expect_keyword(Keyword::Program)?;
+        self.expect_keyword(Keyword::Assign)?; // program -> (Function assignment);
+    
+        let name = self.expect_ident()?;
+        let mut params = Vec::new();
+        if self.match_symbol(Symbols::LParen) {
+            while !self.match_symbol(Symbols::RParen) {
+                params.push(self.expect_ident()?);
+                self.match_symbol(Symbols::Comma);
+            }
+        }
+
+        self.expect_symbol(Symbols::LCurlyBracket)?;
+        let body = self.parse_block()?;
+
+        Ok(Statement::Function(FunctionDecl { name, params, body }))
+    }
+
+    fn parse_while_loops(&mut self) -> Result<Statement, String> {
+        self.expect_keyword(Keyword::While)?;
+        self.expect_symbol(Symbols::LParen)?;
+
+        let condition = self.parse_expr()?;
+
+        self.expect_symbol(Symbols::RParen)?;
+
+        let body = if self.match_symbol(Symbols::LCurlyBracket) {
+            Statement::Block(self.parse_block()?).into()
+        } else {
+            Box::new(self.parse_statement()?)
+        };
+
+        Ok(Statement::While { condition, body })
+    }
+
+    fn parse_if_statement(&mut self) -> Result<Statement, String> {
+        self.expect_keyword(Keyword::If)?;
+        self.expect_symbol(Symbols::LParen)?;
+       
+        let condition = self.parse_expr()?;
+       
+        self.expect_symbol(Symbols::RParen)?;
+        //self.expect_symbol(Symbols::LCurlyBracket)?;
+
+        let then_branch = Box::new(Statement::Block(self.parse_block()?));
+        let else_branch = if self.match_keyword(Keyword::Else) { // Use match_keyword here for
+                                                                // optional else handling.
+            //self.expect_symbol(Symbols::LCurlyBracket)?;
+            // else {
+            Some(Box::new(Statement::Block(self.parse_block()?)))
+        } else {
+            None
+        };
+
+        Ok(Statement::If { condition, then_branch, else_branch })
+    }
+
+    fn parse_block(&mut self) -> Result<Vec<Statement>, String> {
+        self.expect_symbol(Symbols::LCurlyBracket)?;
+        
+        let mut stmts = Vec::new();
+        while !self.match_symbol(Symbols::RCurlyBracket) {
             stmts.push(self.parse_statement()?);
         }
 
@@ -137,6 +236,14 @@ impl Parser {
 
     fn parse_var_decl(&mut self) -> Result<Statement, String> {
         let name = self.expect_ident()?;
+        self.expect_keyword(Keyword::Colon)?;
+        let var_type = if let Some(Token::Types(t)) = self.peek().cloned() {
+            self.next();
+            Some(t)
+        } else {
+            None
+        };
+
         let initializer = if self.match_keyword(Keyword::Assign) {
             Some(self.parse_expr()?)
         } else {
@@ -144,7 +251,7 @@ impl Parser {
         };
 
         self.expect_keyword(Keyword::SemiColon)?;
-        Ok(Statement::VarDecl { name, initializer })
+        Ok(Statement::VarDecl { name, var_type, initializer })
     }
 
     // ------------------------

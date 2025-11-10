@@ -62,6 +62,9 @@ impl Lexer {
             let word = self.read_while(|ch| ch.is_alphanumeric() || ch == '_');
 
             return match word.as_str() {
+                "include" => Token::Keyword(Keyword::Include), // Import native/third party
+                                                               // libraries.
+
                 "local" => Token::Keyword(Keyword::Local),
                 "global" => Token::Keyword(Keyword::Global),
 
@@ -138,5 +141,19 @@ impl Lexer {
 
             _ => Token::Error(format!("Unexpected char: {}", c)),
         }
+    }
+
+    pub fn tokenize(&mut self) -> Result<Vec<Token>, String> {
+        let mut tokens = Vec::new();
+        loop {
+            let tok = self.next_token();
+            if let Token::Error(e) = &tok {
+                if e == "Unexpected EOF" {
+                    break;
+                }
+            }
+            tokens.push(tok);
+        }
+        Ok(tokens)
     }
 }

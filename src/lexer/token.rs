@@ -21,7 +21,12 @@ pub enum Token {
 pub enum Keyword {
     Local,          //  local variables -- Can be used in a specific scope // context.
     Global,         // Global variables -- Can be used in *any* context.
-    
+
+    While,          // Run x task until y condition is met.
+    If,
+    Else,
+    Return,         // Returns a value from a function or a type of loop to be used later on.
+
     Assign,         // Sign of equality during variable assignment. (local {var} -> {val};)
     SemiColon,      // Used to tell the compiler it's ready to move on to the next line.
     Colon,          // Used when explicitly defining the type of a variable.
@@ -46,6 +51,8 @@ pub enum Symbols {
     SingleQuote,    // ''
     
     Period,
+    Comma,          // Typically used as a separator for function parameters. (program -> sample(a:
+                    // String -> 1, b: i8 -> 2, ...))
 }
 
 #[allow(non_camel_case_types)]

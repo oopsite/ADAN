@@ -1,0 +1,13 @@
+// Simple "Hello, world!" program written in AdaN!
+
+include adan.native.io;
+
+program -> main {
+  	local sample: String -> "Hello, world!";
+
+  	program -> my_function(input: String) {
+		io.out(input);
+	}
+
+	my_function(sample);	
+}
