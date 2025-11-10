@@ -13,6 +13,9 @@ pub enum Token {
     Types(Types),
 
     Ident(String),
+    Literal(String),
+    CharLiteral(char),
+
     Error(String),
 }
 

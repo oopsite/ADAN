@@ -7,7 +7,7 @@
 
 */
 
-include adan.native.io;
+include io;
 
 program -> main {
 	io.out("Hello, world!");

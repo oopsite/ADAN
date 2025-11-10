@@ -5,6 +5,7 @@ use inkwell::values::*;
 use inkwell::types::{BasicTypeEnum, BasicMetadataTypeEnum};
 use crate::lexer::token::Types;
 use inkwell::AddressSpace;
+use crate::code_gen::builder::NativeFunc;
 use std::path::Path;
 use std::collections::HashMap;
 
@@ -17,9 +18,11 @@ pub fn codegen_function<'ctx>(ctx: &mut CodeGenContext<'ctx>, declaration: &Func
     ctx.builder.position_at_end(entry);
     for (i, param_name) in declaration.params.iter().enumerate() {
         let param = func.get_nth_param(i as u32).unwrap();
-        let alloca = ctx.builder.build_alloca(ctx.f64_type, param_name).unwrap();
+        let alloca = ctx.builder.build_alloca(ctx.f64_type, param_name)
+            .map_err(|e| format!("alloca failed: {:?}", e))?;
 
-        ctx.builder.build_store(alloca, param);
+        ctx.builder.build_store(alloca, param)
+            .map_err(|e| format!("store param failed: {:?}", e))?;
         ctx.variables.insert(param_name.clone(), alloca);
     }
 
@@ -41,7 +44,8 @@ pub fn codegen_function<'ctx>(ctx: &mut CodeGenContext<'ctx>, declaration: &Func
 pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement) -> Result<(), String> {
     match stmt {
         Statement::Expression(expr) => {
-            codegen_expressions(ctx, expr);
+            codegen_expressions(ctx, expr)
+                .map_err(|e| format!("expr codegen failed: {:?}", e))?;
             Ok(())
         },
 
@@ -73,10 +77,17 @@ pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement
                 None => llvm_type.into_int_type().const_int(0, false).into(),
             };
 
-            let value = initializer.as_ref().map(|e| codegen_expressions(ctx, e)).unwrap_or(default_val);
-            let pointer = ctx.builder.build_alloca(llvm_type, name).unwrap();
+            let value = if let Some(e) = initializer {
+                codegen_expressions(ctx, e).map_err(|e| format!("initializer failed: {:?}", e))?
+            } else {
+                default_val
+            };
 
-            ctx.builder.build_store(pointer, value);
+            let pointer = ctx.builder.build_alloca(llvm_type, name)
+                .map_err(|e| format!("alloca for var '{}' failed: {:?}", name, e))?;
+
+            ctx.builder.build_store(pointer, value)
+                .map_err(|e| format!("store for var '{}' failed: {:?}", name, e))?;
             ctx.variables.insert(name.clone(), pointer);
             Ok(())
         }
@@ -90,24 +101,30 @@ pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement
         },
 
         Statement::If { condition, then_branch, else_branch } => {
-            let cond = codegen_expressions(ctx, condition).into_float_value();
+            let cond_val = codegen_expressions(ctx, condition)
+                .map_err(|e| format!("if condition failed: {:?}", e))?
+                .into_float_value();
             let zero = ctx.context.f64_type().const_float(0.0);
-            let comparison = ctx.builder.build_float_compare(inkwell::FloatPredicate::ONE, cond, zero, "ifcond").unwrap();
+            let comparison = ctx.builder.build_float_compare(inkwell::FloatPredicate::ONE, cond_val, zero, "ifcond")
+                .map_err(|e| format!("float compare failed: {:?}", e))?;
             let func = ctx.builder.get_insert_block().ok_or("No insert block")?.get_parent().ok_or("No parent function")?;
             let then_block = ctx.context.append_basic_block(func, "then");
             let else_block = else_branch.as_ref().map(|_| ctx.context.append_basic_block(func, "else"));
             let merge = ctx.context.append_basic_block(func, "ifcont");
             let target_block = else_block.unwrap_or(merge);
 
-            ctx.builder.build_conditional_branch(comparison, then_block, target_block).unwrap();
+            ctx.builder.build_conditional_branch(comparison, then_block, target_block)
+                .map_err(|e| format!("conditional branch failed: {:?}", e))?;
             ctx.builder.position_at_end(then_block);
             codegen_statements(ctx, then_branch)?;
-            ctx.builder.build_unconditional_branch(merge).unwrap();
+            ctx.builder.build_unconditional_branch(merge)
+                .map_err(|e| format!("unconditional branch failed: {:?}", e))?;
             
             if let (Some(e), Some(else_block)) = (else_branch.as_ref(), else_block.as_ref()) {
                 ctx.builder.position_at_end(*else_block);
-                codegen_statements(ctx, &e);
-                ctx.builder.build_unconditional_branch(merge).unwrap();
+                codegen_statements(ctx, &e)?;
+                ctx.builder.build_unconditional_branch(merge)
+                    .map_err(|e| format!("unconditional branch in else failed: {:?}", e))?;
             }
 
             ctx.builder.position_at_end(merge);
@@ -120,17 +137,23 @@ pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement
             let body_block = ctx.context.append_basic_block(func, "whilebody");
             let merge = ctx.context.append_basic_block(func, "whilecont");
 
-            ctx.builder.build_unconditional_branch(cond_block).unwrap();
+            ctx.builder.build_unconditional_branch(cond_block)
+                .map_err(|e| format!("initial branch failed: {:?}", e))?;
             ctx.builder.position_at_end(cond_block);
 
-            let condition_value = codegen_expressions(ctx, condition).into_float_value();
+            let cond_val = codegen_expressions(ctx, condition)
+                .map_err(|e| format!("while condition failed: {:?}", e))?
+                .into_float_value();
             let zero = ctx.context.f64_type().const_float(0.0);
-            let comparison = ctx.builder.build_float_compare(inkwell::FloatPredicate::ONE, condition_value, zero, "whilecond").unwrap();
+            let comparison = ctx.builder.build_float_compare(inkwell::FloatPredicate::ONE, cond_val, zero, "whilecond")
+                .map_err(|e| format!("float compare failed: {:?}", e))?;
 
-            ctx.builder.build_conditional_branch(comparison, body_block, merge).unwrap();
+            ctx.builder.build_conditional_branch(comparison, body_block, merge)
+                .map_err(|e| format!("conditional branch failed: {:?}", e))?;
             ctx.builder.position_at_end(body_block);
             codegen_statements(ctx, body)?;
-            ctx.builder.build_unconditional_branch(cond_block).unwrap();
+            ctx.builder.build_unconditional_branch(cond_block)
+                .map_err(|e| format!("unconditional branch back to cond failed: {:?}", e))?;
             ctx.builder.position_at_end(merge);
             Ok(())
         },
@@ -141,55 +164,60 @@ pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement
         },
 
         Statement::Return { value } => {
-            let return_value = value.as_ref().map(|v| codegen_expressions(ctx, v))
-                .unwrap_or_else(|| ctx.f64_type.const_float(0.0).into());
+            let return_value = if let Some(v) = value {
+                codegen_expressions(ctx, v).map_err(|e| format!("return expr failed: {:?}", e))?
+            } else {
+                ctx.f64_type.const_float(0.0).into()
+            };
 
             ctx.builder.build_return(Some(&return_value));
             Ok(())
         },
 
-        // For now only works for built-in libraries. Third party libraries will not be supported
-        // until the package manager is fully settled and finished.
         Statement::Include(path) => {
             println!("Including module: {}", path);
 
-            let parts: Vec<&str> = path.split('.').collect();
-            let alias = parts.last().unwrap().to_string();
-            let relative_path = path.strip_prefix("adan.").unwrap_or(path);
-            let file_path = Path::new("src").join(relative_path.replace('.', "/")).with_extension("rs");
+            let alias = path.clone();
+            if ctx.modules.contains_key(&alias) {
+                println!("Module '{}' is already registered (native).", alias);
+                return Ok(());
+            }
+
+            let relative_path = path.strip_prefix("adan.").unwrap_or(&path);
+            let file_path = std::path::Path::new("src")
+                .join(relative_path.replace('.', "/"))
+                .with_extension("rs");
+
             println!("Resolved include path: {}", file_path.display());
 
-            let contents = std::fs::read_to_string(&file_path)
-                .map_err(|_| format!("Include file not found: {}", file_path.display()))?;
-
+            let contents = std::fs::read_to_string(&file_path).map_err(|_| format!("Include file not found: {}", file_path.display()))?;
             let mut lexer = crate::lexer::lexer::Lexer::new(&contents);
             let tokens = lexer.tokenize()?;
             let mut parser = crate::parser::parser::Parser::new(tokens);
             let included_stmts = parser.parse()?;
-
-            let mut module_val = ModuleValue {
-                functions: HashMap::new(),
-                variables: HashMap::new(),
+            let mut module_val = crate::code_gen::builder::ModuleValue {
+                functions: std::collections::HashMap::new(),
+                variables: std::collections::HashMap::new(),
             };
 
             for stmt in included_stmts {
-                match &stmt {
+                match stmt {
                     Statement::Function(func) => {
                         println!("Included function: {}", func.name);
-                        module_val.functions.insert(func.name.clone(), func.clone());
+                        module_val.functions.insert(func.name.clone(), crate::code_gen::builder::NativeFunc::AdanFunction(func));
                     }
                     Statement::VarDecl { name, .. } => {
                         println!("Included variable: {}", name);
                         let ptr = ctx.builder.build_alloca(ctx.f64_type, &name)
-                            .map_err(|e| format!("Failed to build alloca: {:?}", e))?;
+                            .map_err(|e| format!("alloca in include failed: {:?}", e))?;
                         module_val.variables.insert(name.clone(), ptr);
                     }
                     _ => {}
                 }
             }
 
-            ctx.modules.insert(alias.clone(), module_val);
-            println!("Module '{}' included successfully", alias);
+            ctx.modules.insert(alias, module_val);
+            println!("Module '{}' included successfully", path);
 
             Ok(())
         }

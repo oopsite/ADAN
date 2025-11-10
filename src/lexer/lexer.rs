@@ -109,6 +109,17 @@ impl Lexer {
             return self.next_token();
         }
 
+        if c == '"' {
+            self.advance();
+            let string_content = self.read_while(|ch| ch != '"');
+            if self.preview() == Some('"') {
+                self.advance();
+                return Token::Literal(string_content);
+            } else {
+                return Token::Error("Unterminated string literal".to_string());
+            }
+        }
+
         self.advance();
         match c {
             ';' => Token::Symbols(Symbols::SemiColon),
@@ -117,7 +128,6 @@ impl Lexer {
             ')' => Token::Symbols(Symbols::RParen),
             '{' => Token::Symbols(Symbols::LCurlyBracket),
             '}' => Token::Symbols(Symbols::RCurlyBracket),
-            '"' => Token::Symbols(Symbols::Quotation),
             '\'' => Token::Symbols(Symbols::SingleQuote),
             '.' => Token::Symbols(Symbols::Period),
             ',' => Token::Symbols(Symbols::Comma),
