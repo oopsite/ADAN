@@ -56,10 +56,15 @@ impl Parser {
     }
 
     fn match_keyword(&mut self, kw: Keyword) -> bool {
-        if matches!(self.peek(), Some(Token::Keyword(k)) if *k == kw) {
+        let peeked = self.peek();
+        println!("match_keyword: looking for {:?}, peeked: {:?}", kw, peeked);
+
+        if matches!(peeked, Some(Token::Keyword(k)) if *k == kw) {
             self.pos += 1;
+            println!("match_keyword: matched {:?}", kw);
             true
         } else {
+            println!("match_keyword: did not match {:?}", kw);
             false
         }
     }
@@ -111,6 +116,9 @@ impl Parser {
     // Statements
     // ------------------------
     fn parse_statement(&mut self) -> Result<Statement, String> {
+        while let Some(Token::Symbols(Symbols::Comment)) = self.peek() {
+            self.next();
+        }
         if self.match_keyword(Keyword::Include) {
             return self.parse_include();
         }
@@ -133,19 +141,19 @@ impl Parser {
             return Ok(Statement::Block(self.parse_block()?));
         }
         let expr = self.parse_expr()?;
-        self.expect_keyword(Keyword::SemiColon)?;
+        self.expect_symbol(Symbols::SemiColon)?;
         Ok(Statement::Expression(expr))
     }
 
     fn parse_include(&mut self) -> Result<Statement, String> {
-        self.expect_keyword(Keyword::Include)?;
+        // self.expect_keyword(Keyword::Include)?;
 
         let mut path = String::new();
         loop {
             match self.next().ok_or("Unexpected EOF in include")? {
                 Token::Ident(s) => path.push_str(&s),
                 Token::Symbols(Symbols::Period) => path.push('.'),
-                Token::Keyword(Keyword::SemiColon) => break,
+                Token::Symbols(Symbols::SemiColon) => break,
                 tok => return Err(format!("Unexpected token in include: {:?}", tok)),
             }
         }
@@ -155,32 +163,37 @@ impl Parser {
 
     fn parse_return(&mut self) -> Result<Statement, String> {
         self.expect_keyword(Keyword::Return)?;
-        let value = if !self.match_keyword(Keyword::SemiColon) {
+        let value = if !self.match_symbol(Symbols::SemiColon) {
             Some(self.parse_expr()?)
         } else {
             None
         };
 
-        self.expect_keyword(Keyword::SemiColon)?;
+        self.expect_symbol(Symbols::SemiColon)?;
         Ok(Statement::Return { value })
     }
 
     fn parse_functions(&mut self) -> Result<Statement, String> {
-        self.expect_keyword(Keyword::Program)?;
-        self.expect_keyword(Keyword::Assign)?; // program -> (Function assignment);
-    
+        self.expect_keyword(Keyword::Assign)?;
+        
         let name = self.expect_ident()?;
         let mut params = Vec::new();
         if self.match_symbol(Symbols::LParen) {
             while !self.match_symbol(Symbols::RParen) {
-                params.push(self.expect_ident()?);
+                let param_name = self.expect_ident()?;
+                self.expect_symbol(Symbols::Colon)?;
+                if let Some(Token::Types(_ty)) = self.peek().cloned() {
+                    self.next();
+                } else {
+                    return Err("Expected type after ':' in function parameter".to_string());
+                }
+        
                 self.match_symbol(Symbols::Comma);
+                params.push(param_name);
             }
         }
-
-        self.expect_symbol(Symbols::LCurlyBracket)?;
+        
         let body = self.parse_block()?;
-
         Ok(Statement::Function(FunctionDecl { name, params, body }))
     }
 
@@ -236,7 +249,7 @@ impl Parser {
 
     fn parse_var_decl(&mut self) -> Result<Statement, String> {
         let name = self.expect_ident()?;
-        self.expect_keyword(Keyword::Colon)?;
+        self.expect_symbol(Symbols::Colon)?;
         let var_type = if let Some(Token::Types(t)) = self.peek().cloned() {
             self.next();
             Some(t)
@@ -250,7 +263,7 @@ impl Parser {
             None
         };
 
-        self.expect_keyword(Keyword::SemiColon)?;
+        self.expect_symbol(Symbols::SemiColon)?;
         Ok(Statement::VarDecl { name, var_type, initializer })
     }
 
@@ -269,7 +282,7 @@ impl Parser {
                 Token::Symbols(Symbols::Period) => {
                     break;
                 }
-                Token::Keyword(Keyword::Colon) => {
+                Token::Symbols(Symbols::Colon) => {
                     break;
                 }
                 _ => break,
@@ -290,7 +303,6 @@ impl Parser {
     }
 
     fn parse_prim(&mut self) -> Result<Expr, String> {
-        // Take one token from the stream.
         let tok = match self.next() {
             Some(t) => t.clone(),
             None => return Err("Unexpected EOF while parsing primary expression".into()),
@@ -302,37 +314,27 @@ impl Parser {
                 Ok(Expr::Literal(Literal::Number(val)))
             }
             Token::Ident(name) => {
-                let next_tok = self.peek().cloned();
+                let mut base = name;
+                while self.match_symbol(Symbols::Period) {
+                    let member = self.expect_ident()?;
+                    base = format!("{}.{}", base, member);
+                }
 
-                match next_tok {
-                    Some(Token::Symbols(Symbols::LParen)) => {
-                        self.next();
-
-                        let mut args = Vec::new();
-                        let next_after_paren = self.peek().cloned();
-                        match next_after_paren {
-                            Some(Token::Symbols(Symbols::RParen)) => {
-                                self.next();
+                if self.match_symbol(Symbols::LParen) {
+                    let mut args = Vec::new();
+                    if !self.match_symbol(Symbols::RParen) {
+                        loop {
+                            args.push(self.parse_expr()?);
+                            if self.match_symbol(Symbols::RParen) {
+                                break;
                             }
-                            _ => {
-                                let arg = self.parse_expr()?;
-                                args.push(arg);
-                                match self.next() {
-                                    Some(Token::Symbols(Symbols::RParen)) => {}
-                                    other => {
-                                        return Err(format!(
-                                            "Expected ')' after argument list, found {:?}",
-                                            other
-                                        ));
-                                    }
-                                }
-                            }
+                            self.expect_symbol(Symbols::Comma)?;
                         }
-
-                        Ok(Expr::FCall { callee: String::from(name), args })
                     }
-
-                    _ => Ok(Expr::Variable(String::from(name))),
+                    
+                    Ok(Expr::FCall { callee: base, args })
+                } else {
+                    Ok(Expr::Variable(base))
                 }
             }
             Token::Symbols(Symbols::LParen) => {

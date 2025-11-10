@@ -1,13 +1,14 @@
-// Simple "Hello, world!" program written in AdaN!
+// Simple "Hello, world!" program written in ADAN.
+/*
+
+	This is a silly little multi-lined comment!
+
+	You can do anything you'd like.
+
+*/
 
 include adan.native.io;
 
 program -> main {
-  	local sample: String -> "Hello, world!";
-
-  	program -> my_function(input: String) {
-		io.out(input);
-	}
-
-	my_function(sample);	
+	io.out("Hello, world!");
 }

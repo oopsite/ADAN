@@ -1,5 +1,6 @@
 use crate::parser::ast::{Expr, Literal, Operation};
 use crate::code_gen::builder::{CodeGenContext};
+use crate::code_gen::statements::{codegen_function};
 use inkwell::AddressSpace;
 use inkwell::values::*;                             // Gave up on adding stuff, literally just
                                                     // importing all of it.
@@ -68,19 +69,40 @@ pub fn codegen_expressions<'ctx>(ctx: &mut CodeGenContext<'ctx>, expr: &Expr) ->
             val
         },
 
-        Expr::FCall { callee, args } => { 
-            let func = ctx.module.get_function(callee).expect("Function not defined");
+        Expr::FCall { callee, args } => {
+            println!("Calling function: {}", callee);
+
+            let parts: Vec<&str> = callee.split('.').collect();
+            let func: FunctionValue<'ctx> = if parts.len() == 1 {
+                ctx.module.get_function(parts[0]).expect("Function not defined")
+            } else {
+                let module_name = parts[..parts.len() - 1].join(".");
+                let func_name = parts.last().unwrap();
+                println!("Looking up function '{}' in module '{}'", func_name, module_name);
+
+                let decl_ref = {
+                    let module_val = ctx.modules.get(&module_name).expect("Module not found");
+                    module_val.get_function(func_name).expect("Function not defined in module").clone()
+                };
+
+                codegen_function(ctx, &decl_ref).expect("Failed to codegen included function")
+            };
+
+            println!("Function resolved: {:?}", func);
+
             let arg_vals: Vec<BasicValueEnum> = args.iter().map(|arg| codegen_expressions(ctx, arg)).collect();
+            println!("Arguments: {:?}", arg_vals);
+
             let metadata_args: Vec<BasicMetadataValueEnum> = arg_vals.iter().map(|v| (*v).into()).collect();
             let call_site_result = ctx.builder.build_call(func, &metadata_args, "calltmp");
             let call_site = call_site_result.expect("call failed");
             let ret_val: BasicValueEnum = unsafe {
-                // Refer to line 18 for an explanation on what this does.
                 std::mem::transmute::<_, BasicValueEnum>(call_site.try_as_basic_value())
             };
 
+            println!("Call returned: {:?}", ret_val);
             ret_val
-        },
+        }
 
         Expr::Variable(var_name) => {
             let var_pointer = ctx.variables.get(var_name).expect("Variable not declared");

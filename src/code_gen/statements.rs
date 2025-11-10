@@ -1,10 +1,12 @@
 use crate::parser::ast::{FunctionDecl, Statement, Expr};
-use crate::code_gen::builder::CodeGenContext;
+use crate::code_gen::builder::{CodeGenContext, ModuleValue};
 use crate::code_gen::expressions::codegen_expressions;
 use inkwell::values::*;
 use inkwell::types::{BasicTypeEnum, BasicMetadataTypeEnum};
 use crate::lexer::token::Types;
 use inkwell::AddressSpace;
+use std::path::Path;
+use std::collections::HashMap;
 
 pub fn codegen_function<'ctx>(ctx: &mut CodeGenContext<'ctx>, declaration: &FunctionDecl) -> Result<FunctionValue<'ctx>, String> {
     let param_types: Vec<BasicMetadataTypeEnum> = declaration.params.iter().map(|_| ctx.f64_type.into()).collect();
@@ -149,17 +151,45 @@ pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement
         // For now only works for built-in libraries. Third party libraries will not be supported
         // until the package manager is fully settled and finished.
         Statement::Include(path) => {
-            let file_path = path.replace('.', "/") + ".adn";
-            let contents = std::fs::read_to_string(&file_path).map_err(|_| format!("Include file not found: {}", file_path))?;
+            println!("Including module: {}", path);
+
+            let parts: Vec<&str> = path.split('.').collect();
+            let alias = parts.last().unwrap().to_string();
+            let relative_path = path.strip_prefix("adan.").unwrap_or(path);
+            let file_path = Path::new("src").join(relative_path.replace('.', "/")).with_extension("rs");
+            println!("Resolved include path: {}", file_path.display());
+
+            let contents = std::fs::read_to_string(&file_path)
+                .map_err(|_| format!("Include file not found: {}", file_path.display()))?;
+
             let mut lexer = crate::lexer::lexer::Lexer::new(&contents);
             let tokens = lexer.tokenize()?;
             let mut parser = crate::parser::parser::Parser::new(tokens);
-            let included_stmts = parser.parse();
-            for stmt_vec in included_stmts {
-                for stmt in stmt_vec {
-                    codegen_statements(ctx, &stmt)?;
+            let included_stmts = parser.parse()?;
+
+            let mut module_val = ModuleValue {
+                functions: HashMap::new(),
+                variables: HashMap::new(),
+            };
+
+            for stmt in included_stmts {
+                match &stmt {
+                    Statement::Function(func) => {
+                        println!("Included function: {}", func.name);
+                        module_val.functions.insert(func.name.clone(), func.clone());
+                    }
+                    Statement::VarDecl { name, .. } => {
+                        println!("Included variable: {}", name);
+                        let ptr = ctx.builder.build_alloca(ctx.f64_type, &name)
+                            .map_err(|e| format!("Failed to build alloca: {:?}", e))?;
+                        module_val.variables.insert(name.clone(), ptr);
+                    }
+                    _ => {}
                 }
             }
+
+            ctx.modules.insert(alias.clone(), module_val);
+            println!("Module '{}' included successfully", alias);
 
             Ok(())
         }

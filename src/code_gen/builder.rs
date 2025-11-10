@@ -7,6 +7,7 @@ use inkwell::{
     types::{FloatType, IntType},
     AddressSpace,
 };
+use crate::parser::ast::{FunctionDecl, Statement};
 
 pub struct CodeGenContext<'ctx> {
     pub context: &'ctx Context,
@@ -17,7 +18,20 @@ pub struct CodeGenContext<'ctx> {
     // Add onto this over time, if necessary.
     pub f64_type: FloatType<'ctx>,
     pub bool_type: IntType<'ctx>,
+    
     pub variables: HashMap<String, PointerValue<'ctx>>,
+    pub modules: HashMap<String, ModuleValue<'ctx>>,
+}
+
+pub struct ModuleValue<'ctx> {
+    pub functions: HashMap<String, FunctionDecl>,
+    pub variables: HashMap<String, PointerValue<'ctx>>, // or Expr representation!
+}
+
+impl<'ctx> ModuleValue<'ctx> {
+    pub fn get_function(&self, name: &str) -> Option<&FunctionDecl> {
+        self.functions.get(name)
+    }
 }
 
 impl<'ctx> CodeGenContext<'ctx> {
@@ -33,7 +47,9 @@ impl<'ctx> CodeGenContext<'ctx> {
             // Refer to line 15 for explanations on what these're used for.
             f64_type: context.f64_type(),
             bool_type: context.bool_type(),
+            
             variables: HashMap::new(),
+            modules: HashMap::new(),
         }
     }
 

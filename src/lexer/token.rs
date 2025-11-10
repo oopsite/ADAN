@@ -28,8 +28,6 @@ pub enum Keyword {
     Return,         // Returns a value from a function or a type of loop to be used later on.
 
     Assign,         // Sign of equality during variable assignment. (local {var} -> {val};)
-    SemiColon,      // Used to tell the compiler it's ready to move on to the next line.
-    Colon,          // Used when explicitly defining the type of a variable.
 
     Include,        // Importing binaries or third party packages to your AdaN script.
     Program,        // Creating a new function outside of the main function. (program -> {var})
@@ -50,6 +48,8 @@ pub enum Symbols {
     Quotation,      // ""
     SingleQuote,    // ''
     
+    SemiColon,      // Used to tell the compiler it's ready to move on to the next line.
+    Colon,          // Used when explicitly defining the type of a variable.
     Period,
     Comma,          // Typically used as a separator for function parameters. (program -> sample(a:
                     // String -> 1, b: i8 -> 2, ...))
