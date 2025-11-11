@@ -8,9 +8,37 @@ use inkwell::AddressSpace;
 use crate::code_gen::builder::NativeFunc;
 use std::path::Path;
 use std::collections::HashMap;
+use std::fs;
 
-pub fn codegen_function<'ctx>(ctx: &mut CodeGenContext<'ctx>, declaration: &FunctionDecl) -> Result<FunctionValue<'ctx>, String> {
-    let param_types: Vec<BasicMetadataTypeEnum> = declaration.params.iter().map(|_| ctx.f64_type.into()).collect();
+pub type NativeRegisterFn<'ctx> = fn(&mut CodeGenContext<'ctx>);
+
+pub fn load_native_registry<'ctx>() -> HashMap<String, NativeRegisterFn<'ctx>> {
+    let mut map: HashMap<String, NativeRegisterFn<'ctx>> = HashMap::new();
+    let dir = "src/native";
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().map(|s| s == "rs").unwrap_or(false) {
+                if let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().into_owned()) {
+                    let register_fn: NativeRegisterFn<'ctx> = match stem.as_str() {
+                        "io" => crate::native::io::register_native,
+                        _ => continue,
+                    };
+
+                    map.insert(stem, register_fn);
+                }
+            }
+        }
+    }
+
+    map
+}
+
+pub fn codegen_function<'ctx>(ctx: &mut CodeGenContext<'ctx>, declaration: &FunctionDecl, registry: &HashMap<String, NativeRegisterFn<'ctx>>) -> Result<FunctionValue<'ctx>, String> {
+    let param_types: Vec<BasicMetadataTypeEnum> = declaration
+        .params.iter()
+        .map(|_| ctx.f64_type.into())
+        .collect();
     let fn_type = ctx.f64_type.fn_type(&param_types, false);
     let func = ctx.module.add_function(&declaration.name, fn_type, None);
     let entry = ctx.context.append_basic_block(func, "entry");
@@ -27,7 +55,7 @@ pub fn codegen_function<'ctx>(ctx: &mut CodeGenContext<'ctx>, declaration: &Func
     }
 
     for stmt in &declaration.body {
-        codegen_statements(ctx, stmt)?;
+        codegen_statements(ctx, stmt, registry)?;
     }
 
     if func.get_last_basic_block().unwrap().get_terminator().is_none() {
@@ -41,10 +69,10 @@ pub fn codegen_function<'ctx>(ctx: &mut CodeGenContext<'ctx>, declaration: &Func
     Ok(func)
 }
 
-pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement) -> Result<(), String> {
+pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement, registry: &HashMap<String, NativeRegisterFn<'ctx>>) -> Result<(), String> {
     match stmt {
         Statement::Expression(expr) => {
-            codegen_expressions(ctx, expr)
+            codegen_expressions(ctx, expr, registry)
                 .map_err(|e| format!("expr codegen failed: {:?}", e))?;
             Ok(())
         },
@@ -78,7 +106,7 @@ pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement
             };
 
             let value = if let Some(e) = initializer {
-                codegen_expressions(ctx, e).map_err(|e| format!("initializer failed: {:?}", e))?
+                codegen_expressions(ctx, e, registry).map_err(|e| format!("initializer failed: {:?}", e))?
             } else {
                 default_val
             };
@@ -95,13 +123,13 @@ pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement
 
         Statement::Block(statements) => {
             for s in statements {
-                codegen_statements(ctx, s)?;
+                codegen_statements(ctx, s, registry)?;
             }
             Ok(())
         },
 
         Statement::If { condition, then_branch, else_branch } => {
-            let cond_val = codegen_expressions(ctx, condition)
+            let cond_val = codegen_expressions(ctx, condition, registry)
                 .map_err(|e| format!("if condition failed: {:?}", e))?
                 .into_float_value();
             let zero = ctx.context.f64_type().const_float(0.0);
@@ -116,13 +144,13 @@ pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement
             ctx.builder.build_conditional_branch(comparison, then_block, target_block)
                 .map_err(|e| format!("conditional branch failed: {:?}", e))?;
             ctx.builder.position_at_end(then_block);
-            codegen_statements(ctx, then_branch)?;
+            codegen_statements(ctx, then_branch, registry)?;
             ctx.builder.build_unconditional_branch(merge)
                 .map_err(|e| format!("unconditional branch failed: {:?}", e))?;
             
             if let (Some(e), Some(else_block)) = (else_branch.as_ref(), else_block.as_ref()) {
                 ctx.builder.position_at_end(*else_block);
-                codegen_statements(ctx, &e)?;
+                codegen_statements(ctx, &e, registry)?;
                 ctx.builder.build_unconditional_branch(merge)
                     .map_err(|e| format!("unconditional branch in else failed: {:?}", e))?;
             }
@@ -141,7 +169,7 @@ pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement
                 .map_err(|e| format!("initial branch failed: {:?}", e))?;
             ctx.builder.position_at_end(cond_block);
 
-            let cond_val = codegen_expressions(ctx, condition)
+            let cond_val = codegen_expressions(ctx, condition, registry)
                 .map_err(|e| format!("while condition failed: {:?}", e))?
                 .into_float_value();
             let zero = ctx.context.f64_type().const_float(0.0);
@@ -151,7 +179,7 @@ pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement
             ctx.builder.build_conditional_branch(comparison, body_block, merge)
                 .map_err(|e| format!("conditional branch failed: {:?}", e))?;
             ctx.builder.position_at_end(body_block);
-            codegen_statements(ctx, body)?;
+            codegen_statements(ctx, body, registry)?;
             ctx.builder.build_unconditional_branch(cond_block)
                 .map_err(|e| format!("unconditional branch back to cond failed: {:?}", e))?;
             ctx.builder.position_at_end(merge);
@@ -159,13 +187,13 @@ pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement
         },
 
         Statement::Function(declaration) => {
-            codegen_function(ctx, declaration)?;
+            codegen_function(ctx, declaration, registry)?;
             Ok(())
         },
 
         Statement::Return { value } => {
             let return_value = if let Some(v) = value {
-                codegen_expressions(ctx, v).map_err(|e| format!("return expr failed: {:?}", e))?
+                codegen_expressions(ctx, v, registry).map_err(|e| format!("return expr failed: {:?}", e))?
             } else {
                 ctx.f64_type.const_float(0.0).into()
             };
@@ -175,49 +203,21 @@ pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement
         },
 
         Statement::Include(path) => {
-            println!("Including module: {}", path);
+            //println!("Including module: {}", path);
 
             let alias = path.clone();
             if ctx.modules.contains_key(&alias) {
-                println!("Module '{}' is already registered (native).", alias);
+                //println!("Module '{}' is already registered (native).", alias);
                 return Ok(());
             }
 
-            let relative_path = path.strip_prefix("adan.").unwrap_or(&path);
-            let file_path = std::path::Path::new("src")
-                .join(relative_path.replace('.', "/"))
-                .with_extension("rs");
+            //println!("Registering the '{}' module", alias);
 
-            println!("Resolved include path: {}", file_path.display());
-
-            let contents = std::fs::read_to_string(&file_path).map_err(|_| format!("Include file not found: {}", file_path.display()))?;
-            let mut lexer = crate::lexer::lexer::Lexer::new(&contents);
-            let tokens = lexer.tokenize()?;
-            let mut parser = crate::parser::parser::Parser::new(tokens);
-            let included_stmts = parser.parse()?;
-            let mut module_val = crate::code_gen::builder::ModuleValue {
-                functions: std::collections::HashMap::new(),
-                variables: std::collections::HashMap::new(),
-            };
-
-            for stmt in included_stmts {
-                match stmt {
-                    Statement::Function(func) => {
-                        println!("Included function: {}", func.name);
-                        module_val.functions.insert(func.name.clone(), crate::code_gen::builder::NativeFunc::AdanFunction(func));
-                    }
-                    Statement::VarDecl { name, .. } => {
-                        println!("Included variable: {}", name);
-                        let ptr = ctx.builder.build_alloca(ctx.f64_type, &name)
-                            .map_err(|e| format!("alloca in include failed: {:?}", e))?;
-                        module_val.variables.insert(name.clone(), ptr);
-                    }
-                    _ => {}
-                }
+            if let Some(register_fn) = registry.get(&alias) {
+                register_fn(ctx);
+                //println!("Native module '{}' registered automatically", alias);
+                return Ok(());
             }
-
-            ctx.modules.insert(alias, module_val);
-            println!("Module '{}' included successfully", path);
 
             Ok(())
         }

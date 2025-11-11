@@ -1,9 +1,10 @@
 use crate::parser::ast::{Expr, Literal, Operation};
 use crate::code_gen::builder::CodeGenContext;
-use crate::code_gen::statements::codegen_function;
+use crate::code_gen::statements::{codegen_function, NativeRegisterFn};
 use crate::code_gen::builder::NativeFunc;
 use inkwell::values::*;
 use inkwell::AddressSpace;
+use std::collections::HashMap;
 
 fn build_float_mod<'ctx>(ctx: &mut CodeGenContext<'ctx>, lhs: FloatValue<'ctx>, rhs: FloatValue<'ctx>) -> Result<FloatValue<'ctx>, String> {
     let f64_type = ctx.context.f64_type();
@@ -19,7 +20,7 @@ fn build_float_mod<'ctx>(ctx: &mut CodeGenContext<'ctx>, lhs: FloatValue<'ctx>, 
     Ok(valkind.into_float_value())
 }
 
-pub fn codegen_expressions<'ctx>(ctx: &mut CodeGenContext<'ctx>, expr: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
+pub fn codegen_expressions<'ctx>(ctx: &mut CodeGenContext<'ctx>, expr: &Expr, registry: &HashMap<String, NativeRegisterFn<'ctx>>) -> Result<BasicValueEnum<'ctx>, String> {
     match expr {
         Expr::Literal(lit) => match lit {
             Literal::Number(n) => Ok(ctx.context.f64_type().const_float(*n).into()),
@@ -37,14 +38,14 @@ pub fn codegen_expressions<'ctx>(ctx: &mut CodeGenContext<'ctx>, expr: &Expr) ->
         Expr::Unary { op, right } => {
             match op {
                 Operation::Negate => {
-                    let r = codegen_expressions(ctx, right)?.into_float_value();
+                    let r = codegen_expressions(ctx, right, registry)?.into_float_value();
                     let fv = ctx.builder
                         .build_float_neg(r, "negtmp")
                         .map_err(|e| format!("float neg failed: {:?}", e))?;
                     Ok(fv.into())
                 }
                 Operation::Not => {
-                    let r = codegen_expressions(ctx, right)?.into_int_value();
+                    let r = codegen_expressions(ctx, right, registry)?.into_int_value();
                     let iv = ctx.builder
                         .build_not(r, "nottmp")
                         .map_err(|e| format!("not op failed: {:?}", e))?;
@@ -55,7 +56,7 @@ pub fn codegen_expressions<'ctx>(ctx: &mut CodeGenContext<'ctx>, expr: &Expr) ->
         }
 
         Expr::Assign { name, value } => {
-            let val = codegen_expressions(ctx, value)?;
+            let val = codegen_expressions(ctx, value, registry)?;
             let var_pointer = ctx.variables
                 .get(name)
                 .ok_or_else(|| format!("Variable not declared: {}", name))?;
@@ -67,70 +68,37 @@ pub fn codegen_expressions<'ctx>(ctx: &mut CodeGenContext<'ctx>, expr: &Expr) ->
 
         Expr::FCall { callee, args } => {
             let parts: Vec<&str> = callee.split('.').collect();
-            let func_val: Result<BasicValueEnum<'ctx>, String> = if parts.len() == 1 {
-                if let Some(NativeFunc::AdanFunction(ref adan_func)) = ctx.modules
-                    .get("")
-                    .and_then(|m| m.get_function(parts[0]))
-                {
-                    let llvm_fn = codegen_function(ctx, adan_func)
-                        .map_err(|e| format!("codegen ADAN function failed: {:?}", e))?;
-
-                    let arg_vals: Result<Vec<BasicValueEnum<'ctx>>, String> =
-                        args.iter().map(|a| codegen_expressions(ctx, a)).collect();
-                    let arg_vals = arg_vals?;
-                    let metadata_args: Vec<BasicMetadataValueEnum> =
-                        arg_vals.iter().map(|v| (*v).into()).collect();
-
-                    let call_site = ctx.builder.build_call(llvm_fn, &metadata_args, "calltmp");
-                    let valkind = unsafe {
-                        std::mem::transmute::<_, BasicValueEnum>(call_site.try_as_basic_value())
-                    };
-                    Ok(valkind)
-                } else if let Some(NativeFunc::NativeFn(native)) = ctx.modules
-                    .get("")
-                    .and_then(|m| m.get_function(parts[0]))
-                {
-                    let arg_vals: Result<Vec<BasicValueEnum<'ctx>>, String> =
-                        args.iter().map(|a| codegen_expressions(ctx, a)).collect();
-                    let arg_vals = arg_vals?;
-                    Ok(native(ctx, arg_vals))
-                } else {
-                    Err(format!("Function '{}' not found", parts[0]))
-                }
+            let (module_name, func_name) = if parts.len() > 1 {
+                (parts[..parts.len() - 1].join("."), parts.last().unwrap())
             } else {
-                let module_name = parts[..parts.len() - 1].join(".");
-                let func_name = parts.last().unwrap();
-                let module_val = ctx.modules
-                    .get(&module_name)
-                    .ok_or_else(|| format!("Module not found: {}", module_name))?;
-
-                match module_val.get_function(func_name) {
-                    Some(NativeFunc::AdanFunction(ref adan_func)) => {
-                        let llvm_fn = codegen_function(ctx, adan_func)
-                            .map_err(|e| format!("codegen included function failed: {:?}", e))?;
-
-                        let arg_vals: Result<Vec<BasicValueEnum<'ctx>>, String> =
-                            args.iter().map(|a| codegen_expressions(ctx, a)).collect();
-                        let arg_vals = arg_vals?;
-                        let metadata_args: Vec<BasicMetadataValueEnum> =
-                            arg_vals.iter().map(|v| (*v).into()).collect();
-
-                        let call_site = ctx.builder.build_call(llvm_fn, &metadata_args, "calltmp");
-                        let valkind = unsafe {
-                            std::mem::transmute::<_, BasicValueEnum>(call_site.try_as_basic_value())
-                        };
-                        Ok(valkind)
-                    }
-                    Some(NativeFunc::NativeFn(native_fn)) => {
-                        let arg_vals: Result<Vec<BasicValueEnum<'ctx>>, String> =
-                            args.iter().map(|a| codegen_expressions(ctx, a)).collect();
-                        let arg_vals = arg_vals?;
-                        Ok(native_fn(ctx, arg_vals))
-                    }
-                    None => Err(format!("Function '{}' not defined in module '{}'", func_name, module_name)),
-                }
+                ("".to_string(), &parts[0])
             };
-            func_val
+
+            if !ctx.modules.contains_key(&module_name) {
+                if let Some(register_fn) = registry.get(&module_name) {
+                    register_fn(ctx);
+                    //println!("Native module '{}' auto-registered", module_name);
+                }
+            }
+
+            let func_opt = ctx.modules.get(&module_name).and_then(|m| m.get_function(func_name)).cloned();
+            match func_opt {
+                Some(NativeFunc::AdanFunction(adan_func)) => {
+                    let llvm_fn = codegen_function(ctx, &adan_func, registry).map_err(|e| format!("codegen ADAN function failed: {:?}", e))?;
+                    let arg_vals: Vec<BasicValueEnum<'ctx>> = args.iter().map(|a| codegen_expressions(ctx, a, registry)).collect::<Result<_, _>>()?;
+                    let metadata_args: Vec<BasicMetadataValueEnum> = arg_vals.iter().map(|v| (*v).into()).collect();
+                    let call_site = ctx.builder.build_call(llvm_fn, &metadata_args, "calltmp").map_err(|e| format!("call failed: {:?}", e))?;
+                    let valkind = unsafe { std::mem::transmute::<_, BasicValueEnum>(call_site.try_as_basic_value()) };
+                    Ok(valkind)
+                }
+        
+                Some(NativeFunc::NativeFn(native_fn)) => {
+                    let arg_vals: Vec<BasicValueEnum<'ctx>> = args.iter().map(|a| codegen_expressions(ctx, a, registry)).collect::<Result<_, _>>()?;
+                    Ok(native_fn(ctx, arg_vals))
+                }
+        
+                None => Err(format!("Function '{}' not defined in module '{}'", func_name, module_name)),
+            }
         }
 
         Expr::Variable(var_name) => {
@@ -144,8 +112,8 @@ pub fn codegen_expressions<'ctx>(ctx: &mut CodeGenContext<'ctx>, expr: &Expr) ->
         }
 
         Expr::Binary { left, op, right } => {
-            let l = codegen_expressions(ctx, left)?.into_float_value();
-            let r = codegen_expressions(ctx, right)?.into_float_value();
+            let l = codegen_expressions(ctx, left, registry)?.into_float_value();
+            let r = codegen_expressions(ctx, right, registry)?.into_float_value();
 
             match op {
                 Operation::Add => Ok(ctx.builder.build_float_add(l, r, "addtmp")

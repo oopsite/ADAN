@@ -29,14 +29,14 @@ impl Parser {
 
     fn match_keyword(&mut self, kw: Keyword) -> bool {
         let peeked = self.peek();
-        println!("match_keyword: looking for {:?}, peeked: {:?}", kw, peeked);
+        //println!("match_keyword: looking for {:?}, peeked: {:?}", kw, peeked);
 
         if matches!(peeked, Some(Token::Keyword(k)) if *k == kw) {
             self.pos += 1;
-            println!("match_keyword: matched {:?}", kw);
+            //println!("match_keyword: matched {:?}", kw);
             true
         } else {
-            println!("match_keyword: did not match {:?}", kw);
+            //println!("match_keyword: did not match {:?}", kw);
             false
         }
     }

@@ -7,8 +7,8 @@
 
 */
 
-include io;
+include adan.native.io;
 
 program -> main {
-	io.out("Hello, world!");
+	io.printf("ADAN compiled and ran successfully.");
 }

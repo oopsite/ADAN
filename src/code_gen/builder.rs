@@ -22,6 +22,7 @@ pub struct CodeGenContext<'ctx> {
     pub modules: HashMap<String, ModuleValue<'ctx>>,
 }
 
+#[derive(Clone)]
 pub enum NativeFunc<'ctx> {
     AdanFunction(FunctionDecl),
     NativeFn(fn(&mut CodeGenContext<'ctx>, Vec<BasicValueEnum<'ctx>>) -> BasicValueEnum<'ctx>),
@@ -60,6 +61,8 @@ impl<'ctx> CodeGenContext<'ctx> {
                 functions: HashMap::new(),
                 variables: HashMap::new(),
             });
+
+        //println!("Registered function '{}' in module '{}'", fn_name, module_name);
 
         module.functions.insert(fn_name.to_string(), NativeFunc::NativeFn(func));
     }
