@@ -130,20 +130,25 @@ pub fn codegen_statements<'ctx>(ctx: &mut CodeGenContext<'ctx>, stmt: &Statement
 
         Statement::If { condition, then_branch, else_branch } => {
             let cond_val = codegen_expressions(ctx, condition, registry).map_err(|e| format!("if condition failed: {:?}", e))?;
-            //println!("Condition value: {:?}", cond_val);
+            // println!("Condition value: {:?}", cond_val);
             let cond_i1 = match cond_val {
-                BasicValueEnum::IntValue(iv) => ctx.builder.build_int_compare(
-                    inkwell::IntPredicate::NE,
-                    iv,
-                    ctx.context.i32_type().const_zero(),
-                    "ifcond"
-                ),
-                BasicValueEnum::FloatValue(fv) => ctx.builder.build_float_compare(
-                    inkwell::FloatPredicate::ONE,
-                    fv,
-                    ctx.context.f64_type().const_float(0.0),
-                    "ifcond"
-                ),
+                BasicValueEnum::IntValue(iv) => {
+                    let zero = iv.get_type().const_zero();
+                    ctx.builder.build_int_compare(inkwell::IntPredicate::NE, iv, zero, "ifcond")
+                }
+                BasicValueEnum::FloatValue(fv) => {
+                    let zero_f = ctx.context.f64_type().const_float(0.0);
+                    ctx.builder.build_float_compare(inkwell::FloatPredicate::ONE, fv, zero_f, "ifcond")
+                }
+                BasicValueEnum::PointerValue(pv) => {
+                    let null_ptr = pv.get_type().const_null();
+                    ctx.builder.build_int_compare(
+                        inkwell::IntPredicate::NE,
+                        pv.const_to_int(ctx.context.i64_type()),
+                        null_ptr.const_to_int(ctx.context.i64_type()),
+                        "ifcond_ptr"
+                    )
+                }
                 _ => return Err("Cannot use this type in if condition".into()),
             }.unwrap();
 

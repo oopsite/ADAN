@@ -1,22 +1,13 @@
-# --------- CAPPUCINA DETECT_OS.py --------- #
-# Used for easy operating system detection.
-# Under the MIT license, to see more please refer to LICENSE.md
-# --------- WRITTEN BY @NVTTLES --------- #
 import os
+import platform
 
-family = os.name
+def check_os() -> str:
+    system_name = platform.system().lower() # fetch the kernel you're using
+    os_mapping = {
+        "linux": "posix",
+        "darwin": "posix", # macOS
+        "windows": "nt",
+        "java": "java"
+    }
 
-def check_os():
-    match family:
-        case "posix":
-            return "posix"
-        case "nt":
-            return "nt"
-        case "java":
-            return "java"
-
-def main():
-    print(str(check_os()))
-
-if __name__ == "__main__":
-    main()
+    return os_mapping.get(system_name, "Unknown")

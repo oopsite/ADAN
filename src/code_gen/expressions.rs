@@ -147,28 +147,35 @@ pub fn codegen_expressions<'ctx>(ctx: &mut CodeGenContext<'ctx>, expr: &Expr, re
                     Ok(res.into())
                 }
                 (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) => {
-                    let strcmp_fn = ctx.module.get_function("strcmp").unwrap_or_else(|| {
+                    // println!("lp -> {:?}, rp -> {:?}", lp, rp);
+                    if let Operation::Equal = op {
+                        let strcmp_fn = ctx.module.get_function("strcmp").unwrap_or_else(|| {
+                            let i8_ptr_type = ctx.context.i8_type().ptr_type(AddressSpace::from(0));
+                            let fn_type = ctx.context.i32_type().fn_type(&[i8_ptr_type.into(), i8_ptr_type.into()], false);
+
+                            ctx.module.add_function("strcmp", fn_type, None)
+                        });
+
                         let i8_ptr_type = ctx.context.i8_type().ptr_type(AddressSpace::from(0));
-                        let fn_type = ctx.context.i32_type().fn_type(&[i8_ptr_type.into(), i8_ptr_type.into()], false);
-        
-                        ctx.module.add_function("strcmp", fn_type, None)
-                    });
+                        let lp_cast = ctx.builder.build_bit_cast(lp, i8_ptr_type, "cast_lp").unwrap().into_pointer_value();
+                        let rp_cast = ctx.builder.build_bit_cast(rp, i8_ptr_type, "cast_rp").unwrap().into_pointer_value();
 
-                    let i8_ptr_type = ctx.context.i8_type().ptr_type(AddressSpace::from(0));
-                    let lp_cast = ctx.builder.build_bit_cast(lp, i8_ptr_type, "cast_lp").unwrap().into_pointer_value();
-                    let rp_cast = ctx.builder.build_bit_cast(rp, i8_ptr_type, "cast_rp").unwrap().into_pointer_value();
+                        let call = ctx.builder.build_call(strcmp_fn, &[lp_cast.into(), rp_cast.into()], "strcmpcall")
+                            .map_err(|e| format!("strcmp call failed: {:?}", e))?;
 
-                    let call = ctx.builder.build_call(strcmp_fn, &[lp_cast.into(), rp_cast.into()], "strcmpcall").map_err(|e| format!("strcmp call failed: {:?}", e))?; 
-                    let valkind = unsafe { std::mem::transmute::<_, BasicValueEnum>(call.try_as_basic_value()) };
-                    let int_res = match valkind {
-                        BasicValueEnum::IntValue(v) => v,
-                        _ => return Err("Expected IntValue from strcmp".to_string()),
-                    };  
+                        let valkind = unsafe { std::mem::transmute::<_, BasicValueEnum>(call.try_as_basic_value()) };
+                        let int_res = match valkind {
+                            BasicValueEnum::IntValue(v) => v,
+                            _ => return Err("Expected IntValue from strcmp".to_string()),
+                        };
 
-                    let cond = ctx.builder.build_int_compare(inkwell::IntPredicate::NE, int_res, ctx.context.i32_type().const_zero(), "strcmp_cond").unwrap();
-                    //let float_result = ctx.builder.build_unsigned_int_to_float(int_res, ctx.context.f64_type(), "strcmd_float").unwrap();
+                        let cond = ctx.builder.build_int_compare(inkwell::IntPredicate::EQ, int_res, ctx.context.i32_type().const_int(0, false), "strcmp_cond")
+                            .map_err(|e| format!("icmp eq failed: {:?}", e))?;
 
-                    Ok(BasicValueEnum::IntValue(cond))
+                        Ok(cond.into())
+                    } else {
+                        Err(format!("Unsupported string binary operation {:?}", op))
+                    }
                 }
 
                 _ => Err(format!("Type mismatch in binary operation")),

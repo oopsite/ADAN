@@ -1,40 +1,27 @@
-# --------- CAPPUCINA MAKEFILE --------- #
-# Used for testing and compiling code easier, with the commands below
-# Under the MIT license, to see more please refer to LICENSE.md
-# --------- WRITTEN BY @NVTTLES --------- #
+EXECUTABLE := compiled/output_exec
 
-OS := $(shell python3 util/detect_os.py 2>/dev/null || python detect_os.py)
-SRC := src/main.c
-OUT := build/main
+RELEASE_OUTPUT := target/release/adan
+DEBUG_OUTPUT := target/debug/adan
 
-ifeq ($(OS),posix)
-	CC := gcc
-	RM := rm -f
-	MKDIR := mkdir -p
-	COMPILE_FLAGS := -Wall -O2
-else ifeq ($(OS),nt)
-	CC := gcc
-	RM := del
-	MKDIR := mkdir
-	OUT := build\\main.exe
-	COMPILE_FLAGS := -Wall -O2
-else
-	$(error Unknown or unsupported OS detected: $(OS))
-endif
+DOCKER_INSTALLER := util/docker.py
+DOCKER_MOUNT := scripts/mount_docker.sh
+DOCKER_CONTAINER_NAME := rust_llvm15
+
+all:
+	python3 $(DOCKER_INSTALLER) || python $(DOCKER_INSTALLER) || py $(DOCKER_INSTALLER)
+	$(DOCKER_MOUNT)
 
 compile:
-	@chmod +x ./scripts/mount-docker.sh; ./scripts/mount_docker.sh
-	@cargo clean
-	@cargo build
+	$(MAKE) all
+	docker exec -it $(DOCKER_CONTAINER_NAME) cargo clean
+	docker exec -it $(DOCKER_CONTAINER_NAME) cargo build
+	docker exec -it $(DOCKER_CONTAINER_NAME) $(DEBUG_OUTPUT)
 
 run:
-	@echo "Running compiled program with args: $(ARGS)"
-	@./output_exec
+	$(MAKE) all
+	docker exec -it $(DOCKER_CONTAINER_NAME) $(DEBUG_OUTPUT)
+	docker exec -it $(DOCKER_CONTAINER_NAME) $(EXECUTABLE)
 
-clean:
-	@echo "Cleaning Cargo build..."
-	@cargo clean
-
-all: compile
-
-.PHONY: all compile clean
+debug:
+	$(MAKE) compile
+	$(MAKE) run
