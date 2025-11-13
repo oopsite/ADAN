@@ -5,7 +5,7 @@ from detect_os import check_os
 def is_docker_installed():
     try:
         subprocess.run(["docker", "--version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        print("Docker is already installed on your system.")
+        # print("Docker is already installed on your system.")
         return True
     except subprocess.CalledProcessError:
         return False
